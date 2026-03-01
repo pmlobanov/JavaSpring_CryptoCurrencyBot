@@ -12,7 +12,7 @@ services:
       - app-network
 
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.7.0
     ports:
       - "${KAFKA_PORT}:${KAFKA_PORT}"
       - "${KAFKA_INTERNAL_PORT}:${KAFKA_INTERNAL_PORT}"
