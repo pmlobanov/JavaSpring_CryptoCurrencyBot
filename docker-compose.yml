@@ -82,6 +82,7 @@ services:
       - MONGO_PORT=${MONGO_PORT}
     volumes:
       - ./vault-init.sh:/vault-init.sh:ro
+      - ./.env:/.env:ro 
     networks:
       - app-network
     restart: "on-failure"
