@@ -1,0 +1,156 @@
+# Версия языка Heat, зависит от версии OpenStack
+heat_template_version: wallaby
+
+# Описание того, что делает этот шаблон
+description: Шаблон для создания VM для infra job
+
+# блок параметров - то, что можно передать при создании стека
+parameters:
+  # Какой образ ОС использовать в OpenStack
+  image:
+    type: string
+    description: Образ операционной системы
+  
+  # Тип виртуальной машины
+  flavor:
+    type: string
+    description: Тип ВМ
+  
+  # Имя SSH ключа для доступа к VM
+  key_name:
+    type: string
+    description: Имя SSH ключа для доступа к VM
+  
+  # Имя сети, к которой подключить VM
+  network_name:
+    type: string
+    description: Имя сети
+
+  # Владелец машины (имя агента Jenkins)
+  owner:
+    type: string
+    description: Владелец машины (имя агента)
+
+# блок ресурсов - что именно будет создано
+resources:
+  # Описание виртуальной машины
+  server:
+    # Nova: сервис управления вычислительными ресурсами
+    type: OS::Nova::Server
+    # Свойства виртуальной машины
+    properties:
+    
+      # Имя VM
+      name: 
+        str_replace:
+          template: "bitbotx-vm-$owner"
+          params:
+            $owner: { get_param: owner }
+      
+      # образ из параметра image
+      image: { get_param: image }
+      # тип из параметра flavor
+      flavor: { get_param: flavor }
+      # ключ из параметра key_name
+      key_name: { get_param: key_name }
+      
+      # подключение к сети из параметра network_name
+      networks:
+        - network: { get_param: network_name }
+      
+      # формат user-data (облачные инициализации)
+      user_data_format: RAW
+      # скрипт, выполняемый при первом запуске VM
+      user_data: |
+        #!/bin/bash
+        # прерывание при любой ошибке
+        set -e
+        
+        # логирование всех действий
+        exec > /var/log/heat-setup.log 2>&1
+        echo "Начало установки: $(date)"
+        
+        echo "1. Обновление пакетов системы"
+        apt-get update -y
+        apt-get upgrade -y
+        
+        echo "2. Установка Java 23"
+        # установка необходимых пакетов
+        apt-get install -y wget apt-transport-https gnupg
+        
+        # добавление GPG ключа Adoptium
+        wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
+        
+        # добавление репозитория Adoptium
+        echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/adoptium.list
+        
+        # обновление списка пакетов
+        apt-get update
+        
+        # установка Temurin 23 JRE (или JDK, если нужно)
+        apt-get install -y temurin-23-jre
+        
+        echo "Проверка Java:"
+        java -version
+        
+        echo "3. Установка Docker"
+        # пакеты для добавления Docker репозитория
+        apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+        
+        # добавление официального GPG ключа Docker
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        
+        # добавление официального репозитория Docker
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # обновление после добавления репозитория
+        apt-get update
+        # установка Docker и плагина Docker Compose
+        apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        
+        echo "Проверка Docker:"
+        docker --version
+        docker compose version
+        
+        echo "4. Настройка прав для Docker"
+        # добавление пользователя ubuntu в группу docker
+        usermod -aG docker ubuntu
+
+        echo "5. Установка дополнительных утилит"
+        apt-get install -y curl git net-tools htop
+        
+        # маркер завершения установки
+        touch /tmp/user-data-completed
+        
+        echo "Установка завершена: $(date)"
+        echo "Лог установки доступен в /var/log/heat-setup.log"
+
+# блок выходных данных - что показать после создания стека
+outputs:
+  # IP адрес созданной VM
+  server_ip:
+    description: IP адрес созданной VM
+    value: { get_attr: [server, first_address] }
+  
+  # Имя созданной VM
+  server_name:
+    description: Имя созданной VM
+    value: { get_attr: [server, name] }
+  
+  # готовая команда для SSH подключения
+  ssh_command:
+    description: Команда для подключения по SSH
+    value:
+      str_replace:
+        template: "ssh -i ~/.ssh/12.pem ubuntu@$ip"
+        params:
+          $ip: { get_attr: [server, first_address] }
+  
+  # инструкция для просмотра лога установки
+  setup_log:
+    description: Инструкция для просмотра лога установки
+    value:
+      str_replace:
+        template: "sudo cat /var/log/heat-setup.log"
+        params:
+          $ip: { get_attr: [server, first_address] }
