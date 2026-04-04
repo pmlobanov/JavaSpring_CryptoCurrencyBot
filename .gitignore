@@ -55,6 +55,7 @@ yarn-error.log*
 
 ### Environment ###
 .env
+.infra.env
 .env.local
 .env.development.local
 .env.test.local
@@ -62,3 +63,10 @@ yarn-error.log*
 
 ### OS ###
 Thumbs.db
+
+### Terraform / Ansible ###
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+ansible/hosts.yml

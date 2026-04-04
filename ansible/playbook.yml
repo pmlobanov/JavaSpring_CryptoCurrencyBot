@@ -1,0 +1,126 @@
+- name: Настройка VM для Java Spring CryptoBot
+  # Группа серверов из инвентарного файла, на которых запускается код
+  hosts: all
+  # Выполнение всех задач от имени суперпользователя root через sudo
+  become: yes
+  # Сбор системной информации о сервере перед началом работы
+  gather_facts: yes
+
+  tasks:
+    # Ожидание снятия блокировки с базы данных пакетов apt
+    - name: Ожидание завершения фоновых обновлений системы
+      shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      # Инструкция не помечать задачу как изменившую систему при любом исходе
+      changed_when: false
+
+    # Установка набора утилит необходимых для добавления сторонних репозиториев
+    - name: Установка инструментов для репозиториев
+      apt:
+        name: 
+          - curl
+          - gnupg
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+        # Убедиться что пакеты установлены в системе
+        state: present
+        # Аналог команды apt update перед установкой
+        update_cache: yes
+
+    # Скачивание файла ключа для проверки подлинности пакетов Java
+    - name: Скачивание GPG-ключа Adoptium
+      # Модуль get_url работает как wget или curl для скачивания файлов
+      get_url:
+        url: https://packages.adoptium.net/artifactory/api/gpg/key/public
+        # Путь сохранения ключа в системное хранилище
+        dest: /usr/share/keyrings/adoptium.asc
+        mode: '0644'
+
+    # Регистрация нового источника пакетов в системе
+    - name: Добавление репозитория Adoptium
+      apt_repository:
+        # Строка репозитория с указанием ключа проверки
+        # Переменная в двойных фигурных скобках подставляет кодовое имя ОС
+        repo: "deb [signed-by=/usr/share/keyrings/adoptium.asc] https://packages.adoptium.net/artifactory/deb {{ ansible_distribution_release }} main"
+        # Имя создаваемого файла в директории /etc/apt/sources.list.d/
+        filename: adoptium
+        state: present
+
+    - name: Установка Java 23 JRE
+      apt:
+        name: temurin-23-jre
+        state: present
+        update_cache: yes
+
+    # Получение ключа для официального репозитория Docker
+    - name: Скачивание GPG-ключа Docker
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: '0644'
+
+    # Настройка доступа к пакетам Docker Engine
+    - name: Добавление репозитория Docker
+      apt_repository:
+        # Указание архитектуры amd64 для корректного поиска пакетов
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    # Установка Docker и сопутствующих компонентов
+    - name: Установка Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: yes
+
+    - name: Настройка прав и запуск сервисов
+      block:
+        # Добавление пользователя в группу для работы с Docker без sudo
+        - name: Добавление пользователя в группу docker
+          # Модуль user управляет учетными записями и группами
+          user:
+            name: ubuntu
+            groups: docker
+            # Добавить в группу к уже имеющимся, а не заменить список групп
+            append: yes
+
+        # Настройка автоматического старта Docker при загрузке сервера
+        - name: Включение автозапуска Docker
+          # Модуль systemd управляет системными службами
+          systemd:
+            name: docker
+            # Включить в автозагрузку ОС
+            enabled: yes
+            # Убедиться что служба запущена прямо сейчас
+            state: started
+
+        # Создание папки на диске для файлов приложения
+        - name: Подготовка папки приложения
+          # Модуль file управляет директориями и правами доступа
+          file:
+            path: /opt/cryptobot
+            # Создать именно папку, а не файл
+            state: directory
+            # Установка владельца и группы для доступа пользователя ubuntu
+            owner: ubuntu
+            group: ubuntu
+            mode: '0755'
+
+    - name: Проверка версий
+      shell: "java -version && docker --version"
+      # Сохранение всего вывода команды в переменную для дальнейшего использования
+      register: check_output
+      # Не считать выполнение этой задачи изменением конфигурации сервера
+      changed_when: false
+
+    # Вывод содержимого переменной на экран пользователя
+    - name: Вывод версий в консоль
+      # Модуль debug предназначен только для печати текста в терминал
+      debug:
+        # Склеивание строк из потока ошибок и стандартного вывода
+        msg: "{{ check_output.stderr_lines + check_output.stdout_lines }}"
