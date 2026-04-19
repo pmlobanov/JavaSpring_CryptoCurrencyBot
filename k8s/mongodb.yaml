@@ -1,0 +1,78 @@
+# MongoDB хранит состояние приложения и инициализируется отдельным JS-скриптом.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+spec:
+  selector:
+    app: mongodb
+  ports:
+    - name: mongo
+      port: ${MONGO_PORT}
+      targetPort: ${MONGO_PORT}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      # Делаем окружение контейнера предсказуемым и без лишних service env-переменных.
+      enableServiceLinks: false
+      containers:
+        - name: mongodb
+          image: mongo:latest
+          args: ["--auth", "--port", "${MONGO_PORT}"]
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: "${MONGO_INITDB_ROOT_USERNAME}"
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              value: "${MONGO_INITDB_ROOT_PASSWORD}"
+            - name: MONGO_INITDB_DATABASE
+              value: "${MONGO_INITDB_DATABASE}"
+          ports:
+            - containerPort: ${MONGO_PORT}
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+            - name: mongo-init-script
+              # Скрипт создаёт appuser и коллекции при первом старте MongoDB.
+              mountPath: /docker-entrypoint-initdb.d/mongo-init.js
+              subPath: mongo-init.js
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: ${MONGO_PORT}
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: ${MONGO_PORT}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+        - name: mongo-init-script
+          configMap:
+            name: mongo-init-script

@@ -1,0 +1,51 @@
+# Zookeeper нужен Kafka для координации в single-node конфигурации.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+spec:
+  selector:
+    app: zookeeper
+  ports:
+    - name: client
+      port: ${ZOOKEEPER_PORT}
+      targetPort: ${ZOOKEEPER_PORT}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      # Отключаем автоматическую подстановку service env-переменных от Kubernetes.
+      # Это уменьшает шум в окружении контейнера и делает поведение ближе к compose.
+      enableServiceLinks: false
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:latest
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "${ZOOKEEPER_PORT}"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+          ports:
+            - containerPort: ${ZOOKEEPER_PORT}
+          # Для Zookeeper достаточно простой проверки открытия TCP-порта.
+          readinessProbe:
+            tcpSocket:
+              port: ${ZOOKEEPER_PORT}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: ${ZOOKEEPER_PORT}
+            initialDelaySeconds: 20
+            periodSeconds: 10

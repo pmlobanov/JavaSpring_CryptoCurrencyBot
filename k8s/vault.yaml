@@ -1,0 +1,123 @@
+# Vault хранит секреты, которые приложение читает при старте.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+spec:
+  selector:
+    app: vault
+  ports:
+    - name: vault
+      port: ${VAULT_PORT}
+      targetPort: ${VAULT_PORT}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      # Отключаем service links, чтобы не засорять env и не ловить неожиданные конфликты.
+      enableServiceLinks: false
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.15
+          args: ["server", "-dev"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              value: "${VAULT_TOKEN}"
+            - name: VAULT_DEV_LISTEN_ADDRESS
+              value: 0.0.0.0:${VAULT_PORT}
+          ports:
+            - containerPort: ${VAULT_PORT}
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          volumeMounts:
+            - name: vault-data
+              mountPath: /vault/file
+          # Здесь достаточно TCP-проверок: если dev Vault слушает порт, он уже готов принимать запросы.
+          readinessProbe:
+            tcpSocket:
+              port: ${VAULT_PORT}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: ${VAULT_PORT}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: vault-data
+          persistentVolumeClaim:
+            claimName: vault-data
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-init
+spec:
+  # Job нужен для одноразовой загрузки секретов в Vault после запуска самого Vault.
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: vault-init
+    spec:
+      # У init-job тоже отключаем service links, чтобы окружение совпадало с ожидаемым скриптом.
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      containers:
+        - name: vault-init
+          image: hashicorp/vault:1.15
+          command:
+            - sh
+            - -c
+            - |
+              # Скрипт и .env монтируются только для чтения, поэтому сначала копируем их
+              # во временную рабочую директорию, где уже можно запускать без побочных эффектов.
+              cp /config/vault-init.sh /work/vault-init.sh
+              cp /env/.env /work/.env
+              chmod +x /work/vault-init.sh
+              cd /work
+              sh ./vault-init.sh
+          volumeMounts:
+            - name: vault-init-script
+              mountPath: /config
+              readOnly: true
+            - name: vault-init-env
+              mountPath: /env
+              readOnly: true
+            - name: workdir
+              mountPath: /work
+      volumes:
+        - name: vault-init-script
+          # Содержимое vault-init.sh берётся из репозитория через ConfigMap.
+          configMap:
+            name: vault-init-script
+        - name: vault-init-env
+          # Мини-.env для Job хранится отдельно, чтобы не копировать весь исходный .env как есть.
+          secret:
+            secretName: vault-init-env
+        - name: workdir
+          # Временная директория нужна только на время работы Job.
+          emptyDir: {}

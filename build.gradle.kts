@@ -2,6 +2,7 @@ plugins {
     java
     application
     id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.google.cloud.tools.jib") version "3.4.4"
 }
 
 group = "spbstu.mcs.telegramBot"
@@ -36,7 +37,7 @@ dependencies {
     implementation("org.springframework.security:spring-security-web:6.1.3")
     implementation("org.springframework.security:spring-security-core:6.1.3")
 
-    //Modulith
+    // Modulith
     implementation("org.springframework.modulith:spring-modulith-core:1.1.3")
     implementation("org.springframework.modulith:spring-modulith-docs:1.3.1") // для генерации документации
 
@@ -75,12 +76,23 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:3.12.4")
     testImplementation("io.projectreactor:reactor-test:3.4.0")
-    
-   
 }
 
 application {
     mainClass.set("spbstu.mcs.telegramBot.Application")
+}
+
+val containerPortProvider = providers.environmentVariable("SERVER_PORT").orElse("8080")
+
+jib {
+    from {
+        image = "eclipse-temurin:23-jre"
+    }
+    container {
+        mainClass = application.mainClass.get()
+        ports = listOf(containerPortProvider.get())
+        creationTime = "USE_CURRENT_TIMESTAMP"
+    }
 }
 
 tasks.test {
@@ -108,6 +120,7 @@ tasks.withType<Jar> {
 tasks.distZip {
     isEnabled = false
 }
+
 tasks.distTar {
     isEnabled = false
 }

@@ -1,0 +1,66 @@
+# Kafka поднимается отдельно и использует Zookeeper как зависимость.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: external
+      port: ${KAFKA_PORT}
+      targetPort: ${KAFKA_PORT}
+    - name: internal
+      port: ${KAFKA_INTERNAL_PORT}
+      targetPort: ${KAFKA_INTERNAL_PORT}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      # Отключение service links, иначе Kubernetes подмешивает KAFKA_PORT=tcp://...
+      # и образ cp-kafka начинает интерпретировать это как свою конфигурацию, из-за чего падает.
+      enableServiceLinks: false
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.7.0
+          env:
+            - name: KAFKA_BROKER_ID
+              value: "1"
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: zookeeper:${ZOOKEEPER_PORT}
+            - name: KAFKA_ADVERTISED_LISTENERS
+              # Внутренний listener используется приложением внутри кластера.
+              value: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://localhost:${KAFKA_PORT}
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: PLAINTEXT
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://0.0.0.0:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://0.0.0.0:${KAFKA_PORT}
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+          ports:
+            - containerPort: ${KAFKA_PORT}
+            - containerPort: ${KAFKA_INTERNAL_PORT}
+          # Проверяем только внутренний listener, потому что именно его использует бот.
+          readinessProbe:
+            tcpSocket:
+              port: ${KAFKA_INTERNAL_PORT}
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: ${KAFKA_INTERNAL_PORT}
+            initialDelaySeconds: 30
+            periodSeconds: 10
